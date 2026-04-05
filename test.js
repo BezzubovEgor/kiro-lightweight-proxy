@@ -4,8 +4,8 @@
  * Tests the proxy without requiring actual OAuth login
  */
 
-import { buildKiroPayload } from './translator.js';
-import { parseEventStreamToOpenAI, chunksToSSE } from './eventstream-parser.js';
+import { buildKiroPayload } from './src/translator.js';
+import { parseEventStreamToOpenAI, chunksToSSE } from './src/eventstream-parser.js';
 
 console.log('🧪 Testing Kiro Lightweight Proxy Components\n');
 

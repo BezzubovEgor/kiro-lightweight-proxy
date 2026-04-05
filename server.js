@@ -11,10 +11,10 @@
  */
 
 import http from 'http';
-import { completeOAuthFlow } from './oauth.js';
-import { getAccessToken, saveToken, getTokenInfo, clearToken, loadToken } from './token-manager.js';
-import { buildKiroPayload } from './translator.js';
-import { parseEventStreamToOpenAI, chunksToSSE } from './eventstream-parser.js';
+import { completeOAuthFlow } from './src/oauth.js';
+import { getAccessToken, saveToken, getTokenInfo, clearToken, loadToken } from './src/token-manager.js';
+import { buildKiroPayload } from './src/translator.js';
+import { parseEventStreamToOpenAI, chunksToSSE } from './src/eventstream-parser.js';
 
 const PORT = process.env.PORT || 3000;
 const KIRO_API_BASE = 'https://codewhisperer.us-east-1.amazonaws.com';
