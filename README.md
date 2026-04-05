@@ -1,21 +1,26 @@
 # Kiro Lightweight Proxy
 
-Minimal OpenAI-compatible proxy for Kiro AI with AWS Builder ID OAuth support.
+A minimal OpenAI-compatible proxy for Kiro AI with AWS Builder ID OAuth support.
 
-**Features:**
-- ✅ AWS Builder ID OAuth device flow (interactive login)
-- ✅ Automatic token refresh (5 min before expiry)
-- ✅ OpenAI `/v1/chat/completions` API compatible
-- ✅ AWS EventStream binary parser with CRC32 validation
-- ✅ Streaming support (SSE)
-- ✅ Request timeouts & retry logic
-- ✅ Request size limits
-- ✅ Optional API key authentication
-- ✅ Optional rate limiting
-- ✅ Async file I/O (non-blocking)
-- ✅ Minimal dependencies (only `uuid`)
-- ✅ ~50 MB RAM usage
-- ✅ Works on 1GB RAM machines
+## Features
+
+- AWS Builder ID OAuth 2.0 device flow authentication
+- Automatic token refresh with configurable buffer
+- OpenAI `/v1/chat/completions` API compatibility
+- AWS EventStream binary protocol parser with CRC32 validation
+- Server-Sent Events (SSE) streaming support
+- Request timeout handling
+- Exponential backoff retry logic
+- Request size limits
+- Optional API key authentication
+- Optional rate limiting
+- Asynchronous file I/O
+- Single dependency (uuid)
+
+## Requirements
+
+- Node.js >= 18.0.0
+- npm or compatible package manager
 
 ## Installation
 
@@ -25,112 +30,89 @@ cd kiro-lightweight-proxy
 npm install
 ```
 
-## Quick Start
+## Usage
 
-### 1. Login with AWS Builder ID
+### Authentication
+
+Initiate OAuth flow with AWS Builder ID:
 
 ```bash
 node server.js --login
 ```
 
-This will:
-1. Register OAuth client with AWS SSO
-2. Show you a URL and code
-3. Wait for you to authorize in browser
-4. Save tokens to `~/.kiro-proxy/token.json`
+The process will:
+1. Register an OAuth client with AWS SSO
+2. Display a verification URL and code
+3. Wait for user authorization
+4. Store credentials in `~/.kiro-proxy/token.json`
 
-### 2. Start Proxy Server
+### Starting the Server
 
 ```bash
 node server.js
 ```
 
-### 3. Use with OpenClaw (or any OpenAI client)
+Default port: 3000
 
-Configure OpenClaw:
-- **Base URL:** `http://localhost:3000`
-- **Model:** `claude-sonnet-4.5`
-- **API Key:** (leave empty, unless you set PROXY_API_KEY)
-
-**Test with curl:**
-```bash
-curl http://localhost:3000/v1/chat/completions \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model": "claude-sonnet-4.5",
-    "messages": [{"role": "user", "content": "Hello!"}],
-    "stream": true
-  }'
-```
-
-## CLI Commands
+### CLI Commands
 
 ```bash
-# Login with AWS Builder ID
-node server.js --login
-
-# Start proxy server
-node server.js
-
-# Show token info
-node server.js --info
-
-# Logout (clear token)
-node server.js --logout
-
-# Show help
-node server.js --help
+node server.js --login    # Start OAuth authentication flow
+node server.js            # Start proxy server
+node server.js --info     # Display token information
+node server.js --logout   # Clear stored credentials
+node server.js --help     # Show help message
 ```
 
 ## Configuration
 
-All configuration via environment variables:
+Configuration is managed through environment variables:
+
+### Server Configuration
 
 ```bash
-# Server
-PORT=3000                          # Server port (default: 3000)
+PORT=3000                          # Server port
+```
 
-# Timeouts
-REQUEST_TIMEOUT_MS=30000           # Request timeout (default: 30s)
-TOKEN_REFRESH_BUFFER_MS=300000     # Token refresh buffer (default: 5min)
+### Timeout Configuration
 
-# Limits
-MAX_REQUEST_SIZE=1048576           # Max request size (default: 1MB)
+```bash
+REQUEST_TIMEOUT_MS=30000           # Request timeout in milliseconds
+TOKEN_REFRESH_BUFFER_MS=300000     # Token refresh buffer in milliseconds
+```
 
-# Authentication (optional)
-PROXY_API_KEY=your-secret-key      # Enable API key auth
+### Limit Configuration
 
-# Rate Limiting (optional)
+```bash
+MAX_REQUEST_SIZE=1048576           # Maximum request size in bytes
+```
+
+### Authentication Configuration
+
+```bash
+PROXY_API_KEY=your-secret-key      # Enable API key authentication
+```
+
+### Rate Limiting Configuration
+
+```bash
 RATE_LIMIT_ENABLED=true            # Enable rate limiting
-RATE_LIMIT_MAX=60                  # Max requests per window
-RATE_LIMIT_WINDOW_MS=60000         # Rate limit window (default: 1min)
+RATE_LIMIT_MAX=60                  # Maximum requests per window
+RATE_LIMIT_WINDOW_MS=60000         # Rate limit window in milliseconds
+```
 
-# Retry
-MAX_RETRIES=3                      # Max retry attempts (default: 3)
-RETRY_DELAY_MS=1000                # Initial retry delay (default: 1s)
+### Retry Configuration
 
-# Kiro API (advanced)
+```bash
+MAX_RETRIES=3                      # Maximum retry attempts
+RETRY_DELAY_MS=1000                # Initial retry delay in milliseconds
+```
+
+### Advanced Configuration
+
+```bash
 KIRO_API_BASE=https://...          # Override Kiro API base URL
 ```
-
-**Example with authentication:**
-```bash
-PROXY_API_KEY=my-secret-key node server.js
-```
-
-Then use in requests:
-```bash
-curl http://localhost:3000/v1/chat/completions \
-  -H "Authorization: Bearer my-secret-key" \
-  -H "Content-Type: application/json" \
-  -d '{"model": "claude-sonnet-4.5", "messages": [...]}'
-```
-
-## Supported Models
-
-- `claude-sonnet-4.5` (default)
-- `claude-haiku-4.5`
-- `claude-opus-4.6`
 
 ## API Endpoints
 
@@ -143,112 +125,249 @@ OpenAI-compatible chat completions endpoint.
 {
   "model": "claude-sonnet-4.5",
   "messages": [
-    {"role": "user", "content": "Hello!"}
+    {"role": "user", "content": "Hello"}
   ],
   "stream": true,
   "max_tokens": 4096,
-  "temperature": 0.7
+  "temperature": 0.7,
+  "top_p": 0.9
 }
 ```
 
-**Response:** SSE stream with OpenAI format chunks
+**Response:** Server-Sent Events stream with OpenAI-formatted chunks
 
 ### GET /v1/models
 
-List available models.
+Returns list of available models.
+
+**Response:**
+```json
+{
+  "object": "list",
+  "data": [
+    {"id": "claude-sonnet-4.5", "object": "model", "owned_by": "anthropic"},
+    {"id": "claude-haiku-4.5", "object": "model", "owned_by": "anthropic"},
+    {"id": "claude-opus-4.6", "object": "model", "owned_by": "anthropic"}
+  ]
+}
+```
 
 ### GET /health
 
 Health check endpoint with token status.
+
+**Response:**
+```json
+{
+  "status": "ok",
+  "authMethod": "builder-id",
+  "expiresAt": "2026-04-05T17:00:00.000Z",
+  "timeLeftMinutes": 60
+}
+```
+
+## Supported Models
+
+- claude-sonnet-4.5
+- claude-haiku-4.5
+- claude-opus-4.6
+
+## Client Integration
+
+### cURL Example
+
+```bash
+curl http://localhost:3000/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "claude-sonnet-4.5",
+    "messages": [{"role": "user", "content": "Hello"}],
+    "stream": true
+  }'
+```
+
+### With Authentication
+
+```bash
+curl http://localhost:3000/v1/chat/completions \
+  -H "Authorization: Bearer your-secret-key" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "claude-sonnet-4.5",
+    "messages": [{"role": "user", "content": "Hello"}]
+  }'
+```
+
+### Python Example
+
+```python
+from openai import OpenAI
+
+client = OpenAI(
+    base_url="http://localhost:3000/v1",
+    api_key="not-required"
+)
+
+response = client.chat.completions.create(
+    model="claude-sonnet-4.5",
+    messages=[{"role": "user", "content": "Hello"}],
+    stream=True
+)
+
+for chunk in response:
+    print(chunk.choices[0].delta.content, end="")
+```
+
+### Node.js Example
+
+```javascript
+import OpenAI from 'openai';
+
+const client = new OpenAI({
+  baseURL: 'http://localhost:3000/v1',
+  apiKey: 'not-required',
+});
+
+const stream = await client.chat.completions.create({
+  model: 'claude-sonnet-4.5',
+  messages: [{ role: 'user', content: 'Hello' }],
+  stream: true,
+});
+
+for await (const chunk of stream) {
+  process.stdout.write(chunk.choices[0]?.delta?.content || '');
+}
+```
 
 ## Architecture
 
 ```
 kiro-lightweight-proxy/
 ├── src/
-│   ├── config.js            # Configuration
-│   ├── oauth.js             # AWS Builder ID OAuth flow
-│   ├── token-manager.js     # Token storage + auto-refresh
-│   ├── translator.js        # OpenAI → Kiro format conversion
-│   ├── eventstream-parser.js # AWS EventStream → OpenAI SSE
-│   ├── http-helper.js       # Fetch with timeout & retry
-│   └── rate-limiter.js      # Rate limiting
-├── server.js                # Main HTTP server + CLI
+│   ├── config.js            # Configuration management
+│   ├── oauth.js             # AWS Builder ID OAuth implementation
+│   ├── token-manager.js     # Token storage and refresh logic
+│   ├── translator.js        # OpenAI to Kiro format conversion
+│   ├── eventstream-parser.js # AWS EventStream binary parser
+│   ├── http-helper.js       # HTTP utilities with timeout and retry
+│   └── rate-limiter.js      # Rate limiting implementation
+├── server.js                # HTTP server and CLI interface
 ├── test.js                  # Component tests
-├── examples.js              # Usage examples
-└── package.json
+└── package.json             # Dependencies
 ```
 
-**Total:** ~900 lines of code, 1 dependency
+## Technical Details
 
-## Performance Features
+### Authentication Flow
 
-- ✅ **Request timeouts** - Prevents hanging connections (30s default)
-- ✅ **Retry with exponential backoff** - Handles transient failures (3 retries)
-- ✅ **Request size limits** - Prevents memory exhaustion (1MB default)
-- ✅ **Async file I/O** - Non-blocking token operations
-- ✅ **Token refresh deduplication** - Prevents concurrent refresh storms
-- ✅ **Memory + disk caching** - Fast token access
-- ✅ **CRC32 validation** - Ensures data integrity
-- ✅ **Optional rate limiting** - Protects against abuse
-- ✅ **Optional authentication** - Secures proxy access
+1. Client registration with AWS SSO OIDC
+2. Device authorization request
+3. User authorization via browser
+4. Token polling with configurable interval
+5. Token storage with automatic refresh
 
-## Comparison with Other Proxies
+### Request Processing
 
-| Feature | This Proxy | Colin3191 | heimanba | OmniRoute |
-|---------|-----------|-----------|----------|-----------|
-| OAuth Login | ✅ Yes | ❌ No | ❌ No | ✅ Yes |
-| RAM Usage | ~50 MB | ~50 MB | ~30 MB | ~300 MB |
-| Dependencies | 1 (uuid) | 2 | 5+ | 50+ |
-| Runtime | Node.js | Node.js | Bun | Node.js |
-| Lines of Code | ~900 | ~500 | ~800 | ~50,000 |
-| Request Timeouts | ✅ Yes | ❌ No | ❌ No | ✅ Yes |
-| Retry Logic | ✅ Yes | ❌ No | ❌ No | ✅ Yes |
-| Rate Limiting | ✅ Optional | ❌ No | ❌ No | ✅ Yes |
-| Authentication | ✅ Optional | ❌ No | ❌ No | ✅ Yes |
-| Async File I/O | ✅ Yes | ❌ No | ❌ No | ✅ Yes |
+1. Request validation and size check
+2. Optional authentication verification
+3. Optional rate limit check
+4. Token retrieval with automatic refresh
+5. Format translation (OpenAI to Kiro)
+6. API request with timeout and retry
+7. Binary response parsing (AWS EventStream)
+8. Format translation (Kiro to OpenAI)
+9. SSE stream response
+
+### Error Handling
+
+- Request timeout after configurable duration
+- Exponential backoff retry for transient failures
+- Graceful token refresh with fallback to existing token
+- CRC32 validation for binary protocol integrity
+- Comprehensive error messages with context
+
+## Performance Characteristics
+
+- Memory usage: ~50 MB
+- Request timeout: 30 seconds (configurable)
+- Retry attempts: 3 (configurable)
+- Token refresh buffer: 5 minutes (configurable)
+- Maximum request size: 1 MB (configurable)
+- Rate limit window: 60 seconds (configurable)
+
+## Security Features
+
+- Optional API key authentication via Bearer token
+- Per-IP rate limiting with configurable thresholds
+- Request size limits to prevent resource exhaustion
+- Automatic token refresh with secure storage
+- CRC32 validation for data integrity
 
 ## Troubleshooting
 
-### "No token found"
-Run `node server.js --login` to authenticate.
+### No Token Found
 
-### "Token expired"
-The proxy automatically refreshes tokens. If refresh fails, run `node server.js --login` again.
+Execute authentication flow:
+```bash
+node server.js --login
+```
 
-### "Request timeout"
-Increase timeout: `REQUEST_TIMEOUT_MS=60000 node server.js`
+### Token Expired
 
-### "Request too large"
-Increase limit: `MAX_REQUEST_SIZE=2097152 node server.js`
+Tokens refresh automatically. If refresh fails, re-authenticate:
+```bash
+node server.js --login
+```
 
-### "Too many requests"
-Rate limiting is active. Wait or disable: `RATE_LIMIT_ENABLED=false node server.js`
+### Request Timeout
 
-### Check token status
+Increase timeout duration:
+```bash
+REQUEST_TIMEOUT_MS=60000 node server.js
+```
+
+### Request Size Exceeded
+
+Increase size limit:
+```bash
+MAX_REQUEST_SIZE=2097152 node server.js
+```
+
+### Rate Limit Exceeded
+
+Adjust rate limit configuration:
+```bash
+RATE_LIMIT_MAX=100 RATE_LIMIT_WINDOW_MS=60000 node server.js
+```
+
+### Token Status Check
+
 ```bash
 node server.js --info
 ```
 
-### Clear token and re-login
-```bash
-node server.js --logout
-node server.js --login
-```
-
 ## Development
 
+### Running Tests
+
 ```bash
-# Run tests
 node test.js
-
-# Show examples
-node examples.js
-
-# Start with debug logging
-DEBUG=* node server.js
 ```
+
+### Viewing Examples
+
+```bash
+node examples.js
+```
+
+## Dependencies
+
+- uuid (^10.0.0) - UUID generation for deterministic caching
 
 ## License
 
 MIT
+
+## Repository
+
+https://github.com/BezzubovEgor/kiro-lightweight-proxy
