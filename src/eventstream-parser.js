@@ -4,6 +4,12 @@
  * Used by Kiro/CodeWhisperer API responses
  */
 
+// Constants
+const HEADER_TYPE_STRING = 7;
+const PRELUDE_SIZE = 12;
+const MIN_FRAME_SIZE = 16;
+const CRC_SIZE = 4;
+
 // CRC32 lookup table (IEEE polynomial)
 const CRC32_TABLE = new Uint32Array(256);
 for (let i = 0; i < 256; i++) {
@@ -49,8 +55,8 @@ function parseEventFrame(data) {
 
     // Parse headers
     const headers = {};
-    let offset = 12;
-    const headerEnd = 12 + headersLength;
+    let offset = PRELUDE_SIZE;
+    const headerEnd = PRELUDE_SIZE + headersLength;
 
     while (offset < headerEnd && offset < data.length) {
       const nameLen = data[offset++];
@@ -61,7 +67,7 @@ function parseEventFrame(data) {
 
       const headerType = data[offset++];
 
-      if (headerType === 7) { // String type
+      if (headerType === HEADER_TYPE_STRING) {
         const valueLen = (data[offset] << 8) | data[offset + 1];
         offset += 2;
         if (offset + valueLen > data.length) break;
@@ -75,8 +81,8 @@ function parseEventFrame(data) {
     }
 
     // Parse payload
-    const payloadStart = 12 + headersLength;
-    const payloadEnd = data.length - 4;
+    const payloadStart = PRELUDE_SIZE + headersLength;
+    const payloadEnd = data.length - CRC_SIZE;
 
     let payload = null;
     if (payloadEnd > payloadStart) {
@@ -110,12 +116,12 @@ export function parseEventStreamToOpenAI(buffer, model) {
 
   let offset = 0;
   while (offset < buffer.length) {
-    if (buffer.length - offset < 16) break;
+    if (buffer.length - offset < MIN_FRAME_SIZE) break;
 
     const view = new DataView(buffer.buffer, buffer.byteOffset + offset);
     const totalLength = view.getUint32(0, false);
 
-    if (totalLength < 16 || offset + totalLength > buffer.length) break;
+    if (totalLength < MIN_FRAME_SIZE || offset + totalLength > buffer.length) break;
 
     const eventData = buffer.slice(offset, offset + totalLength);
     offset += totalLength;

@@ -7,111 +7,138 @@ import { v4 as uuidv4, v5 as uuidv5 } from 'uuid';
 const NAMESPACE_KIRO = '34f7193f-561d-4050-bc84-9547d953d6bf';
 
 /**
+ * Extract content from message
+ */
+function extractContent(msg) {
+  if (typeof msg.content === 'string') {
+    return msg.content;
+  }
+  if (Array.isArray(msg.content)) {
+    return msg.content
+      .filter(c => c.type === 'text' || c.text)
+      .map(c => c.text || '')
+      .join('\n');
+  }
+  return '';
+}
+
+/**
+ * Normalize role (system/tool -> user)
+ */
+function normalizeRole(role) {
+  return (role === 'system' || role === 'tool') ? 'user' : role;
+}
+
+/**
+ * Create tools specification for Kiro
+ */
+function createToolsSpec(tools) {
+  if (!tools || tools.length === 0) return null;
+  
+  return tools.map(t => ({
+    toolSpecification: {
+      name: t.function?.name || t.name,
+      description: t.function?.description || t.description || `Tool: ${t.function?.name || t.name}`,
+      inputSchema: {
+        json: t.function?.parameters || t.parameters || t.input_schema || {},
+      },
+    },
+  }));
+}
+
+/**
+ * Initialize conversion state
+ */
+function initializeState() {
+  return {
+    history: [],
+    currentMessage: null,
+    pendingUserContent: [],
+    pendingAssistantContent: [],
+    currentRole: null,
+  };
+}
+
+/**
+ * Flush pending messages to history
+ */
+function flushPending(state, tools) {
+  if (state.currentRole === 'user') {
+    const content = state.pendingUserContent.join('\n\n').trim() || 'continue';
+    const userMsg = {
+      userInputMessage: {
+        content,
+        modelId: '',
+      },
+    };
+
+    // Add tools to first user message
+    const toolsSpec = createToolsSpec(tools);
+    if (toolsSpec && state.history.length === 0) {
+      userMsg.userInputMessage.userInputMessageContext = { tools: toolsSpec };
+    }
+
+    state.history.push(userMsg);
+    state.currentMessage = userMsg;
+    state.pendingUserContent = [];
+  } else if (state.currentRole === 'assistant') {
+    const content = state.pendingAssistantContent.join('\n\n').trim() || '...';
+    state.history.push({
+      assistantResponseMessage: { content },
+    });
+    state.pendingAssistantContent = [];
+  }
+}
+
+/**
+ * Process a single message
+ */
+function processMessage(msg, state, tools) {
+  const role = normalizeRole(msg.role);
+
+  // If role changes, flush pending
+  if (role !== state.currentRole && state.currentRole !== null) {
+    flushPending(state, tools);
+  }
+  state.currentRole = role;
+
+  if (role === 'user') {
+    const content = extractContent(msg);
+    if (content) state.pendingUserContent.push(content);
+  } else if (role === 'assistant') {
+    const content = extractContent(msg);
+    if (content) state.pendingAssistantContent.push(content);
+  }
+}
+
+/**
+ * Finalize state and return result
+ */
+function finalizeState(state) {
+  // If last message in history is userInputMessage, use it as currentMessage
+  if (state.history.length > 0 && state.history[state.history.length - 1].userInputMessage) {
+    state.currentMessage = state.history.pop();
+  }
+
+  return { history: state.history, currentMessage: state.currentMessage };
+}
+
+/**
  * Convert OpenAI messages to Kiro conversationState format
  */
 function convertMessages(messages, tools) {
-  const history = [];
-  let currentMessage = null;
-  let pendingUserContent = [];
-  let pendingAssistantContent = [];
-  let currentRole = null;
-
-  const flushPending = () => {
-    if (currentRole === 'user') {
-      const content = pendingUserContent.join('\n\n').trim() || 'continue';
-      const userMsg = {
-        userInputMessage: {
-          content,
-          modelId: '',
-        },
-      };
-
-      // Add tools to first user message
-      if (tools && tools.length > 0 && history.length === 0) {
-        userMsg.userInputMessage.userInputMessageContext = {
-          tools: tools.map(t => ({
-            toolSpecification: {
-              name: t.function?.name || t.name,
-              description: t.function?.description || t.description || `Tool: ${t.function?.name || t.name}`,
-              inputSchema: {
-                json: t.function?.parameters || t.parameters || t.input_schema || {},
-              },
-            },
-          })),
-        };
-      }
-
-      history.push(userMsg);
-      currentMessage = userMsg;
-      pendingUserContent = [];
-    } else if (currentRole === 'assistant') {
-      const content = pendingAssistantContent.join('\n\n').trim() || '...';
-      history.push({
-        assistantResponseMessage: {
-          content,
-        },
-      });
-      pendingAssistantContent = [];
-    }
-  };
+  const state = initializeState();
 
   for (const msg of messages) {
-    let role = msg.role;
-
-    // Normalize: system/tool -> user
-    if (role === 'system' || role === 'tool') {
-      role = 'user';
-    }
-
-    // If role changes, flush pending
-    if (role !== currentRole && currentRole !== null) {
-      flushPending();
-    }
-    currentRole = role;
-
-    if (role === 'user') {
-      let content = '';
-      if (typeof msg.content === 'string') {
-        content = msg.content;
-      } else if (Array.isArray(msg.content)) {
-        content = msg.content
-          .filter(c => c.type === 'text' || c.text)
-          .map(c => c.text || '')
-          .join('\n');
-      }
-
-      if (content) {
-        pendingUserContent.push(content);
-      }
-    } else if (role === 'assistant') {
-      let textContent = '';
-      if (typeof msg.content === 'string') {
-        textContent = msg.content;
-      } else if (Array.isArray(msg.content)) {
-        textContent = msg.content
-          .filter(c => c.type === 'text')
-          .map(c => c.text)
-          .join('\n')
-          .trim();
-      }
-
-      if (textContent) {
-        pendingAssistantContent.push(textContent);
-      }
-    }
+    processMessage(msg, state, tools);
   }
 
   // Flush remaining
-  if (currentRole !== null) {
-    flushPending();
+  if (state.currentRole !== null) {
+    flushPending(state, tools);
   }
 
-  // If last message in history is userInputMessage, use it as currentMessage
-  if (history.length > 0 && history[history.length - 1].userInputMessage) {
-    currentMessage = history.pop();
-  }
-
-  return { history, currentMessage };
+  return finalizeState(state);
 }
 
 /**

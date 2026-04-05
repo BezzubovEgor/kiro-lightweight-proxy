@@ -15,15 +15,35 @@ import { completeOAuthFlow } from './src/oauth.js';
 import { getAccessToken, saveToken, getTokenInfo, clearToken, loadToken } from './src/token-manager.js';
 import { buildKiroPayload } from './src/translator.js';
 import { parseEventStreamToOpenAI, chunksToSSE } from './src/eventstream-parser.js';
+import { fetchWithTimeout } from './src/http-helper.js';
+import { rateLimiter } from './src/rate-limiter.js';
+import config from './src/config.js';
 
-const PORT = process.env.PORT || 3000;
-const KIRO_API_BASE = 'https://codewhisperer.us-east-1.amazonaws.com';
+/**
+ * Get client IP for rate limiting
+ */
+function getClientIP(req) {
+  return req.headers['x-forwarded-for']?.split(',')[0] || 
+         req.socket.remoteAddress || 
+         'unknown';
+}
+
+/**
+ * Authenticate request (optional)
+ */
+function authenticate(req) {
+  if (!config.proxyApiKey) return true; // Auth disabled
+  
+  const authHeader = req.headers.authorization;
+  const apiKey = authHeader?.replace('Bearer ', '');
+  return apiKey === config.proxyApiKey;
+}
 
 /**
  * Call Kiro API
  */
 async function callKiroAPI(payload, accessToken) {
-  const response = await fetch(`${KIRO_API_BASE}/generateAssistantResponse`, {
+  const response = await fetchWithTimeout(`${config.kiroApiBase}/generateAssistantResponse`, {
     method: 'POST',
     headers: {
       'Authorization': `Bearer ${accessToken}`,
@@ -44,8 +64,16 @@ async function callKiroAPI(payload, accessToken) {
  */
 async function handleChatCompletions(req, res) {
   let body = '';
+  let bodySize = 0;
   
   req.on('data', chunk => {
+    bodySize += chunk.length;
+    if (bodySize > config.maxRequestSize) {
+      req.destroy();
+      res.writeHead(413, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: { message: 'Request too large' } }));
+      return;
+    }
     body += chunk.toString();
   });
 
@@ -122,7 +150,7 @@ async function handleModels(req, res) {
  */
 async function handleHealth(req, res) {
   try {
-    const tokenInfo = getTokenInfo();
+    const tokenInfo = await getTokenInfo();
     
     if (!tokenInfo) {
       res.writeHead(503, { 'Content-Type': 'application/json' });
@@ -161,6 +189,21 @@ function startServer() {
       return;
     }
 
+    // Authentication check
+    if (!authenticate(req)) {
+      res.writeHead(401, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: { message: 'Unauthorized' } }));
+      return;
+    }
+
+    // Rate limiting check
+    const clientIP = getClientIP(req);
+    if (!rateLimiter.check(clientIP)) {
+      res.writeHead(429, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: { message: 'Too many requests' } }));
+      return;
+    }
+
     // Route handling
     if (url.pathname === '/v1/chat/completions' && req.method === 'POST') {
       handleChatCompletions(req, res);
@@ -177,28 +220,37 @@ function startServer() {
     }
   });
 
-  server.listen(PORT, () => {
+  server.listen(config.port, () => {
     console.log('\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
     console.log('🚀 Kiro Lightweight Proxy');
     console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-    console.log(`\n📡 Server running on http://localhost:${PORT}`);
+    console.log(`\n📡 Server running on http://localhost:${config.port}`);
     console.log('\n📋 Endpoints:');
-    console.log(`   POST http://localhost:${PORT}/v1/chat/completions`);
-    console.log(`   GET  http://localhost:${PORT}/v1/models`);
-    console.log(`   GET  http://localhost:${PORT}/health`);
+    console.log(`   POST http://localhost:${config.port}/v1/chat/completions`);
+    console.log(`   GET  http://localhost:${config.port}/v1/models`);
+    console.log(`   GET  http://localhost:${config.port}/health`);
     
-    const tokenInfo = getTokenInfo();
-    if (tokenInfo) {
-      console.log('\n🔐 Token Status:');
-      console.log(`   Auth Method: ${tokenInfo.authMethod}`);
-      console.log(`   Expires: ${tokenInfo.expiresAt}`);
-      console.log(`   Time Left: ${tokenInfo.timeLeftMinutes} minutes`);
-      console.log(`   Status: ${tokenInfo.isExpired ? '❌ EXPIRED' : '✅ Valid'}`);
-    } else {
-      console.log('\n⚠️  No token found. Run: node server.js --login');
-    }
-    
-    console.log('\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
+    getTokenInfo().then(tokenInfo => {
+      if (tokenInfo) {
+        console.log('\n🔐 Token Status:');
+        console.log(`   Auth Method: ${tokenInfo.authMethod}`);
+        console.log(`   Expires: ${tokenInfo.expiresAt}`);
+        console.log(`   Time Left: ${tokenInfo.timeLeftMinutes} minutes`);
+        console.log(`   Status: ${tokenInfo.isExpired ? '❌ EXPIRED' : '✅ Valid'}`);
+      } else {
+        console.log('\n⚠️  No token found. Run: node server.js --login');
+      }
+      
+      if (config.proxyApiKey) {
+        console.log('\n🔒 Authentication: Enabled');
+      }
+      
+      if (config.rateLimit.enabled) {
+        console.log(`\n⏱️  Rate Limit: ${config.rateLimit.maxRequests} requests per ${config.rateLimit.windowMs / 1000}s`);
+      }
+      
+      console.log('\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
+    });
   });
 }
 
@@ -213,7 +265,7 @@ async function main() {
     // OAuth login flow
     try {
       const tokenData = await completeOAuthFlow();
-      saveToken(tokenData);
+      await saveToken(tokenData);
       console.log('\n✅ Login successful! You can now start the server.\n');
       console.log('Run: node server.js\n');
     } catch (error) {
@@ -222,7 +274,7 @@ async function main() {
     }
   } else if (command === '--info') {
     // Show token info
-    const tokenInfo = getTokenInfo();
+    const tokenInfo = await getTokenInfo();
     if (!tokenInfo) {
       console.log('\n❌ No token found. Run: node server.js --login\n');
       process.exit(1);
@@ -238,7 +290,7 @@ async function main() {
     console.log('\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
   } else if (command === '--logout') {
     // Clear token
-    clearToken();
+    await clearToken();
     console.log('\n✅ Logged out successfully\n');
   } else if (command === '--help' || command === '-h') {
     // Show help
@@ -253,10 +305,14 @@ async function main() {
     console.log('  node server.js --help     Show this help message');
     console.log('\nEnvironment Variables:');
     console.log('  PORT                      Server port (default: 3000)');
+    console.log('  PROXY_API_KEY             Optional API key for authentication');
+    console.log('  RATE_LIMIT_ENABLED        Enable rate limiting (default: false)');
+    console.log('  REQUEST_TIMEOUT_MS        Request timeout (default: 30000)');
+    console.log('  MAX_REQUEST_SIZE          Max request size (default: 1048576)');
     console.log('\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
   } else {
     // Start server (default)
-    const token = loadToken();
+    const token = await loadToken();
     if (!token) {
       console.log('\n❌ No token found. Please login first:\n');
       console.log('   node server.js --login\n');

@@ -3,6 +3,7 @@
  * Kiro OAuth Module - AWS Builder ID Device Flow
  * Handles client registration, device authorization, and token management
  */
+import { fetchWithRetry } from './http-helper.js';
 
 const KIRO_CONFIG = {
   // AWS SSO OIDC endpoints
@@ -26,7 +27,7 @@ const KIRO_CONFIG = {
  * Step 1: Register OAuth client with AWS SSO
  */
 export async function registerClient() {
-  const response = await fetch(KIRO_CONFIG.registerClientUrl, {
+  const response = await fetchWithRetry(KIRO_CONFIG.registerClientUrl, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -55,7 +56,7 @@ export async function registerClient() {
  * Step 2: Start device authorization flow
  */
 export async function startDeviceAuthorization(clientId, clientSecret) {
-  const response = await fetch(KIRO_CONFIG.deviceAuthUrl, {
+  const response = await fetchWithRetry(KIRO_CONFIG.deviceAuthUrl, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -85,7 +86,7 @@ export async function startDeviceAuthorization(clientId, clientSecret) {
  * Step 3: Poll for token (call repeatedly until user authorizes)
  */
 export async function pollDeviceToken(clientId, clientSecret, deviceCode) {
-  const response = await fetch(KIRO_CONFIG.tokenUrl, {
+  const response = await fetchWithRetry(KIRO_CONFIG.tokenUrl, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -94,7 +95,7 @@ export async function pollDeviceToken(clientId, clientSecret, deviceCode) {
       deviceCode,
       grantType: 'urn:ietf:params:oauth:grant-type:device_code',
     }),
-  });
+  }, 1); // Only 1 retry for polling
 
   const data = await response.json();
 
@@ -121,7 +122,7 @@ export async function pollDeviceToken(clientId, clientSecret, deviceCode) {
 export async function refreshToken(refreshToken, clientId, clientSecret, authMethod = 'builder-id') {
   // AWS SSO OIDC refresh (Builder ID or IdC)
   if (clientId && clientSecret) {
-    const response = await fetch(KIRO_CONFIG.tokenUrl, {
+    const response = await fetchWithRetry(KIRO_CONFIG.tokenUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -146,7 +147,7 @@ export async function refreshToken(refreshToken, clientId, clientSecret, authMet
   }
 
   // Social auth refresh (Google/GitHub)
-  const response = await fetch(KIRO_CONFIG.socialRefreshUrl, {
+  const response = await fetchWithRetry(KIRO_CONFIG.socialRefreshUrl, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ refreshToken }),

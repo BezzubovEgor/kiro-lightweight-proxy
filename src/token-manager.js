@@ -2,13 +2,13 @@
 /**
  * Token Manager - Handles token storage, caching, and auto-refresh
  */
-import fs from 'fs';
+import { promises as fs } from 'fs';
 import path from 'path';
 import os from 'os';
 import { refreshToken } from './oauth.js';
+import config from './config.js';
 
 const TOKEN_FILE = path.join(os.homedir(), '.kiro-proxy', 'token.json');
-const REFRESH_BUFFER_MS = 5 * 60 * 1000; // Refresh 5 minutes before expiry
 
 let cachedToken = null;
 let refreshPromise = null;
@@ -16,19 +16,21 @@ let refreshPromise = null;
 /**
  * Ensure token directory exists
  */
-function ensureTokenDir() {
+async function ensureTokenDir() {
   const dir = path.dirname(TOKEN_FILE);
-  if (!fs.existsSync(dir)) {
-    fs.mkdirSync(dir, { recursive: true });
+  try {
+    await fs.mkdir(dir, { recursive: true });
+  } catch (error) {
+    if (error.code !== 'EEXIST') throw error;
   }
 }
 
 /**
  * Save token to disk
  */
-export function saveToken(tokenData) {
-  ensureTokenDir();
-  fs.writeFileSync(TOKEN_FILE, JSON.stringify(tokenData, null, 2));
+export async function saveToken(tokenData) {
+  await ensureTokenDir();
+  await fs.writeFile(TOKEN_FILE, JSON.stringify(tokenData, null, 2));
   cachedToken = tokenData;
   console.log(`💾 Token saved to ${TOKEN_FILE}`);
 }
@@ -36,16 +38,14 @@ export function saveToken(tokenData) {
 /**
  * Load token from disk
  */
-export function loadToken() {
-  if (!fs.existsSync(TOKEN_FILE)) {
-    return null;
-  }
-  
+export async function loadToken() {
   try {
-    const data = fs.readFileSync(TOKEN_FILE, 'utf8');
+    const data = await fs.readFile(TOKEN_FILE, 'utf8');
     return JSON.parse(data);
   } catch (error) {
-    console.error('Failed to load token:', error.message);
+    if (error.code !== 'ENOENT') {
+      console.error('Failed to load token:', error.message);
+    }
     return null;
   }
 }
@@ -55,7 +55,7 @@ export function loadToken() {
  */
 function isTokenExpired(tokenData) {
   if (!tokenData?.expiresAt) return true;
-  return new Date(tokenData.expiresAt).getTime() < Date.now() + REFRESH_BUFFER_MS;
+  return new Date(tokenData.expiresAt).getTime() < Date.now() + config.tokenRefreshBuffer;
 }
 
 /**
@@ -68,7 +68,7 @@ export async function getAccessToken() {
   }
 
   // 2. Load from disk
-  let tokenData = cachedToken || loadToken();
+  let tokenData = cachedToken || await loadToken();
   
   if (!tokenData) {
     throw new Error('No token found. Please run: node server.js --login');
@@ -111,7 +111,7 @@ export async function getAccessToken() {
         expiresAt,
       };
 
-      saveToken(updatedToken);
+      await saveToken(updatedToken);
       console.log(`✅ Token refreshed, new expiry: ${expiresAt}`);
       
       return updatedToken.accessToken;
@@ -137,8 +137,8 @@ export async function getAccessToken() {
 /**
  * Get token info for display
  */
-export function getTokenInfo() {
-  const tokenData = cachedToken || loadToken();
+export async function getTokenInfo() {
+  const tokenData = cachedToken || await loadToken();
   if (!tokenData) return null;
 
   const expiresAt = new Date(tokenData.expiresAt);
@@ -157,9 +157,11 @@ export function getTokenInfo() {
 /**
  * Clear token (logout)
  */
-export function clearToken() {
-  if (fs.existsSync(TOKEN_FILE)) {
-    fs.unlinkSync(TOKEN_FILE);
+export async function clearToken() {
+  try {
+    await fs.unlink(TOKEN_FILE);
+  } catch (error) {
+    if (error.code !== 'ENOENT') throw error;
   }
   cachedToken = null;
   console.log('🗑️  Token cleared');
