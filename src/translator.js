@@ -68,7 +68,7 @@ function flushPending(state, tools) {
     const userMsg = {
       userInputMessage: {
         content,
-        modelId: '',
+        // modelId is only needed in currentMessage, not in history
       },
     };
 

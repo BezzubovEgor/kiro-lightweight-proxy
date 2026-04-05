@@ -93,7 +93,7 @@ export async function getAccessToken() {
 
   refreshPromise = (async () => {
     try {
-      console.log(`🔄 Token expired (${tokenData.expiresAt}), refreshing...`);
+      console.log(`🔄 Token expiring soon (${tokenData.expiresAt}), refreshing...`);
       
       const newTokens = await refreshToken(
         tokenData.refreshToken,
@@ -112,6 +112,7 @@ export async function getAccessToken() {
       };
 
       await saveToken(updatedToken);
+      cachedToken = updatedToken; // Update cache immediately
       console.log(`✅ Token refreshed, new expiry: ${expiresAt}`);
       
       return updatedToken.accessToken;
