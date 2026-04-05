@@ -1,170 +1,157 @@
 # Kiro Lightweight Proxy
 
-A minimal OpenAI-compatible proxy for Kiro AI with AWS Builder ID OAuth support.
+OpenAI-compatible proxy for Kiro AI with AWS Builder ID authentication.
 
-## Features
-
-- AWS Builder ID OAuth 2.0 device flow authentication
-- Automatic token refresh with configurable buffer
-- OpenAI `/v1/chat/completions` API compatibility
-- AWS EventStream binary protocol parser with CRC32 validation
-- Server-Sent Events (SSE) streaming support
-- Request timeout handling
-- Exponential backoff retry logic
-- Request size limits
-- Optional API key authentication
-- Optional rate limiting
-- Asynchronous file I/O
-- Single dependency (uuid)
-
-## Requirements
-
-- Node.js >= 18.0.0
-- npm or compatible package manager
-
-## Installation
+## Quick Start
 
 ```bash
 git clone https://github.com/BezzubovEgor/kiro-lightweight-proxy.git
 cd kiro-lightweight-proxy
 npm install
+node server.js --login  # Follow browser instructions
+node server.js          # Server starts on port 3000
 ```
 
-## Usage
-
-### Authentication
-
-Initiate OAuth flow with AWS Builder ID:
-
+Use with any OpenAI client:
 ```bash
-node server.js --login
+curl http://localhost:3000/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{"model": "claude-sonnet-4.5", "messages": [{"role": "user", "content": "Hello"}]}'
 ```
 
-The process will:
-1. Register an OAuth client with AWS SSO
-2. Display a verification URL and code
-3. Wait for user authorization
-4. Store credentials in `~/.kiro-proxy/token.json`
+## How It Works
 
-### Starting the Server
+### Authentication Flow
 
-```bash
-node server.js
+```
+┌─────────┐                                    ┌──────────────┐
+│  User   │                                    │  AWS SSO     │
+└────┬────┘                                    └──────┬───────┘
+     │                                                │
+     │  1. node server.js --login                    │
+     │────────────────────────────────────────►      │
+     │                                                │
+     │  2. Register OAuth client                     │
+     │───────────────────────────────────────────────►
+     │                                                │
+     │  3. Get device code + verification URL        │
+     │◄───────────────────────────────────────────────
+     │                                                │
+     │  4. Open URL in browser                       │
+     │  https://device.sso.../ABCD-1234              │
+     │                                                │
+     │  5. Authorize                                 │
+     │───────────────────────────────────────────────►
+     │                                                │
+     │  6. Poll for token                            │
+     │───────────────────────────────────────────────►
+     │                                                │
+     │  7. Return access + refresh tokens            │
+     │◄───────────────────────────────────────────────
+     │                                                │
+     │  8. Save to ~/.kiro-proxy/token.json          │
+     │                                                │
 ```
 
-Default port: 3000
+### Request Flow
 
-### CLI Commands
+```
+┌────────────┐         ┌───────────┐         ┌──────────────┐
+│   Client   │         │   Proxy   │         │   Kiro API   │
+└─────┬──────┘         └─────┬─────┘         └──────┬───────┘
+      │                      │                       │
+      │  OpenAI format       │                       │
+      │  POST /v1/chat/...   │                       │
+      │─────────────────────►│                       │
+      │                      │                       │
+      │                      │  1. Get/refresh token │
+      │                      │                       │
+      │                      │  2. Translate format  │
+      │                      │     OpenAI → Kiro     │
+      │                      │                       │
+      │                      │  3. Send request      │
+      │                      │──────────────────────►│
+      │                      │                       │
+      │                      │  4. Binary response   │
+      │                      │     (EventStream)     │
+      │                      │◄──────────────────────│
+      │                      │                       │
+      │                      │  5. Parse binary      │
+      │                      │     + validate CRC32  │
+      │                      │                       │
+      │                      │  6. Translate format  │
+      │                      │     Kiro → OpenAI     │
+      │                      │                       │
+      │  OpenAI SSE stream   │                       │
+      │◄─────────────────────│                       │
+      │                      │                       │
+```
 
-```bash
-node server.js --login    # Start OAuth authentication flow
-node server.js            # Start proxy server
-node server.js --info     # Display token information
-node server.js --logout   # Clear stored credentials
-node server.js --help     # Show help message
+### Token Refresh
+
+```
+Time ──────────────────────────────────────────────────►
+
+Token issued                    5min before expiry      Token expires
+     │                                 │                      │
+     ├─────────────────────────────────┼──────────────────────┤
+     │         Valid period            │   Refresh window     │
+     │                                 │                      │
+     │                                 ▼                      │
+     │                          Auto-refresh                  │
+     │                          triggered                     │
+     │                                 │                      │
+     │                                 ├──► New token         │
+     │                                 │    issued            │
+     │                                 │                      │
+     └─────────────────────────────────┴──────────────────────┘
 ```
 
 ## Configuration
 
-Configuration is managed through environment variables:
-
-### Server Configuration
+Create `.env` file or set environment variables:
 
 ```bash
-PORT=3000                          # Server port
+# Server
+PORT=3000
+
+# Optional: Authentication
+PROXY_API_KEY=your-secret-key
+
+# Optional: Rate limiting
+RATE_LIMIT_ENABLED=true
+RATE_LIMIT_MAX=60
+
+# Timeouts (milliseconds)
+REQUEST_TIMEOUT_MS=30000
+TOKEN_REFRESH_BUFFER_MS=300000
+
+# Limits (bytes)
+MAX_REQUEST_SIZE=1048576
 ```
 
-### Timeout Configuration
+## Commands
 
 ```bash
-REQUEST_TIMEOUT_MS=30000           # Request timeout in milliseconds
-TOKEN_REFRESH_BUFFER_MS=300000     # Token refresh buffer in milliseconds
-```
-
-### Limit Configuration
-
-```bash
-MAX_REQUEST_SIZE=1048576           # Maximum request size in bytes
-```
-
-### Authentication Configuration
-
-```bash
-PROXY_API_KEY=your-secret-key      # Enable API key authentication
-```
-
-### Rate Limiting Configuration
-
-```bash
-RATE_LIMIT_ENABLED=true            # Enable rate limiting
-RATE_LIMIT_MAX=60                  # Maximum requests per window
-RATE_LIMIT_WINDOW_MS=60000         # Rate limit window in milliseconds
-```
-
-### Retry Configuration
-
-```bash
-MAX_RETRIES=3                      # Maximum retry attempts
-RETRY_DELAY_MS=1000                # Initial retry delay in milliseconds
-```
-
-### Advanced Configuration
-
-```bash
-KIRO_API_BASE=https://...          # Override Kiro API base URL
+node server.js --login    # Authenticate with AWS Builder ID
+node server.js            # Start server
+node server.js --info     # Show token status
+node server.js --logout   # Clear credentials
 ```
 
 ## API Endpoints
 
 ### POST /v1/chat/completions
 
-OpenAI-compatible chat completions endpoint.
-
-**Request:**
-```json
-{
-  "model": "claude-sonnet-4.5",
-  "messages": [
-    {"role": "user", "content": "Hello"}
-  ],
-  "stream": true,
-  "max_tokens": 4096,
-  "temperature": 0.7,
-  "top_p": 0.9
-}
-```
-
-**Response:** Server-Sent Events stream with OpenAI-formatted chunks
+Standard OpenAI chat completions endpoint.
 
 ### GET /v1/models
 
-Returns list of available models.
-
-**Response:**
-```json
-{
-  "object": "list",
-  "data": [
-    {"id": "claude-sonnet-4.5", "object": "model", "owned_by": "anthropic"},
-    {"id": "claude-haiku-4.5", "object": "model", "owned_by": "anthropic"},
-    {"id": "claude-opus-4.6", "object": "model", "owned_by": "anthropic"}
-  ]
-}
-```
+List available models.
 
 ### GET /health
 
-Health check endpoint with token status.
-
-**Response:**
-```json
-{
-  "status": "ok",
-  "authMethod": "builder-id",
-  "expiresAt": "2026-04-05T17:00:00.000Z",
-  "timeLeftMinutes": 60
-}
-```
+Server and token status.
 
 ## Supported Models
 
@@ -172,202 +159,71 @@ Health check endpoint with token status.
 - claude-haiku-4.5
 - claude-opus-4.6
 
-## Client Integration
+## Examples
 
-### cURL Example
-
-```bash
-curl http://localhost:3000/v1/chat/completions \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model": "claude-sonnet-4.5",
-    "messages": [{"role": "user", "content": "Hello"}],
-    "stream": true
-  }'
-```
-
-### With Authentication
-
-```bash
-curl http://localhost:3000/v1/chat/completions \
-  -H "Authorization: Bearer your-secret-key" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model": "claude-sonnet-4.5",
-    "messages": [{"role": "user", "content": "Hello"}]
-  }'
-```
-
-### Python Example
+### Python
 
 ```python
 from openai import OpenAI
 
-client = OpenAI(
-    base_url="http://localhost:3000/v1",
-    api_key="not-required"
-)
-
+client = OpenAI(base_url="http://localhost:3000/v1", api_key="not-needed")
 response = client.chat.completions.create(
     model="claude-sonnet-4.5",
     messages=[{"role": "user", "content": "Hello"}],
     stream=True
 )
-
-for chunk in response:
-    print(chunk.choices[0].delta.content, end="")
 ```
 
-### Node.js Example
+### Node.js
 
 ```javascript
 import OpenAI from 'openai';
 
 const client = new OpenAI({
   baseURL: 'http://localhost:3000/v1',
-  apiKey: 'not-required',
+  apiKey: 'not-needed'
 });
 
 const stream = await client.chat.completions.create({
   model: 'claude-sonnet-4.5',
   messages: [{ role: 'user', content: 'Hello' }],
-  stream: true,
+  stream: true
 });
-
-for await (const chunk of stream) {
-  process.stdout.write(chunk.choices[0]?.delta?.content || '');
-}
 ```
 
 ## Architecture
 
 ```
-kiro-lightweight-proxy/
-├── src/
-│   ├── config.js            # Configuration management
-│   ├── oauth.js             # AWS Builder ID OAuth implementation
-│   ├── token-manager.js     # Token storage and refresh logic
-│   ├── translator.js        # OpenAI to Kiro format conversion
-│   ├── eventstream-parser.js # AWS EventStream binary parser
-│   ├── http-helper.js       # HTTP utilities with timeout and retry
-│   └── rate-limiter.js      # Rate limiting implementation
-├── server.js                # HTTP server and CLI interface
-├── test.js                  # Component tests
-└── package.json             # Dependencies
+src/
+├── config.js              # Configuration
+├── oauth.js               # AWS Builder ID OAuth
+├── token-manager.js       # Token storage & refresh
+├── translator.js          # Format conversion
+├── eventstream-parser.js  # Binary protocol parser
+├── http-helper.js         # Timeout & retry
+└── rate-limiter.js        # Rate limiting
+
+server.js                  # HTTP server + CLI
 ```
 
-## Technical Details
+## Features
 
-### Authentication Flow
+- AWS Builder ID OAuth 2.0 device flow
+- Automatic token refresh
+- OpenAI API compatibility
+- Binary protocol parsing with CRC32 validation
+- Request timeouts (30s)
+- Retry with exponential backoff (3 attempts)
+- Request size limits (1MB)
+- Optional API key authentication
+- Optional rate limiting
+- Async file operations
 
-1. Client registration with AWS SSO OIDC
-2. Device authorization request
-3. User authorization via browser
-4. Token polling with configurable interval
-5. Token storage with automatic refresh
+## Requirements
 
-### Request Processing
-
-1. Request validation and size check
-2. Optional authentication verification
-3. Optional rate limit check
-4. Token retrieval with automatic refresh
-5. Format translation (OpenAI to Kiro)
-6. API request with timeout and retry
-7. Binary response parsing (AWS EventStream)
-8. Format translation (Kiro to OpenAI)
-9. SSE stream response
-
-### Error Handling
-
-- Request timeout after configurable duration
-- Exponential backoff retry for transient failures
-- Graceful token refresh with fallback to existing token
-- CRC32 validation for binary protocol integrity
-- Comprehensive error messages with context
-
-## Performance Characteristics
-
-- Memory usage: ~50 MB
-- Request timeout: 30 seconds (configurable)
-- Retry attempts: 3 (configurable)
-- Token refresh buffer: 5 minutes (configurable)
-- Maximum request size: 1 MB (configurable)
-- Rate limit window: 60 seconds (configurable)
-
-## Security Features
-
-- Optional API key authentication via Bearer token
-- Per-IP rate limiting with configurable thresholds
-- Request size limits to prevent resource exhaustion
-- Automatic token refresh with secure storage
-- CRC32 validation for data integrity
-
-## Troubleshooting
-
-### No Token Found
-
-Execute authentication flow:
-```bash
-node server.js --login
-```
-
-### Token Expired
-
-Tokens refresh automatically. If refresh fails, re-authenticate:
-```bash
-node server.js --login
-```
-
-### Request Timeout
-
-Increase timeout duration:
-```bash
-REQUEST_TIMEOUT_MS=60000 node server.js
-```
-
-### Request Size Exceeded
-
-Increase size limit:
-```bash
-MAX_REQUEST_SIZE=2097152 node server.js
-```
-
-### Rate Limit Exceeded
-
-Adjust rate limit configuration:
-```bash
-RATE_LIMIT_MAX=100 RATE_LIMIT_WINDOW_MS=60000 node server.js
-```
-
-### Token Status Check
-
-```bash
-node server.js --info
-```
-
-## Development
-
-### Running Tests
-
-```bash
-node test.js
-```
-
-### Viewing Examples
-
-```bash
-node examples.js
-```
-
-## Dependencies
-
-- uuid (^10.0.0) - UUID generation for deterministic caching
+- Node.js >= 18.0.0
+- 1 dependency (uuid)
 
 ## License
 
 MIT
-
-## Repository
-
-https://github.com/BezzubovEgor/kiro-lightweight-proxy
