@@ -219,6 +219,28 @@ server.js                  # HTTP server + CLI
 - Optional rate limiting
 - Async file operations
 
+## Startup Service
+
+Install as a system service to start automatically on boot.
+
+See [STARTUP.md](STARTUP.md) for detailed instructions:
+
+- **macOS:** LaunchAgent
+- **Linux:** systemd
+- **Windows:** Windows Service
+
+Quick install:
+```bash
+# macOS
+./scripts/install-macos.sh
+
+# Linux
+./scripts/install-linux.sh
+
+# Windows (PowerShell as Administrator)
+.\scripts\install-windows.ps1
+```
+
 ## Requirements
 
 - Node.js >= 18.0.0
