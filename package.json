@@ -1,0 +1,22 @@
+{
+  "name": "kiro-lightweight-proxy",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Lightweight Kiro AI proxy with AWS Builder ID OAuth support",
+  "main": "server.js",
+  "bin": {
+    "kiro-proxy": "./server.js"
+  },
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js"
+  },
+  "dependencies": {
+    "uuid": "^10.0.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "keywords": ["kiro", "aws", "builder-id", "proxy", "openai", "anthropic"],
+  "license": "MIT"
+}
